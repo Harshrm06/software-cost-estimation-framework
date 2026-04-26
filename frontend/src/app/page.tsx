@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+
 import { 
   BarChart, 
   Bar, 
@@ -105,60 +104,116 @@ const COMPLIANCE_STANDARDS = [
   'None', 'HIPAA', 'GDPR', 'PCI-DSS', 'I need your expert advice on compliance', 'Other'
 ];
 
+// --- Unified Cost & FPA Impacts ---
+// We map each option to an FPA point value. 
+// Roughly: 1 FPA Point ≈ ₹10,000 - ₹15,000 in the final estimate.
+const OPTION_IMPACTS: Record<string, { fpa: number; label: string }> = {
+  // Step 1: Industry
+  'tailored_Yes': { fpa: 8, label: '+₹95k' },
+  'tailored_No': { fpa: 0, label: 'Standard' },
+  'tailored_Not sure': { fpa: 2, label: '+₹25k' },
+  'Healthcare': { fpa: 10, label: '+₹1.2L' },
+  'Financial': { fpa: 12, label: '+₹1.5L' },
+  'E-commerce': { fpa: 6, label: '+₹75k' },
+  'Gaming': { fpa: 4, label: '+₹50k' },
+  'Logistics': { fpa: 7, label: '+₹85k' },
+  'Real Estate': { fpa: 5, label: '+₹60k' },
+  'Retail': { fpa: 4, label: '+₹50k' },
+  'Education': { fpa: 3, label: '+₹40k' },
+  'Other_Industry': { fpa: 3, label: '+₹40k' },
+  'SaaS': { fpa: 10, label: '+₹1.2L' },
+  'Marketplace': { fpa: 18, label: '+₹2.1L' },
+  'ERP/CRM': { fpa: 25, label: '+₹3.2L' },
+  'Other_Purpose': { fpa: 5, label: '+₹60k' },
+
+  // Step 2: Users & Reach
+  '1-10': { fpa: 0, label: 'Base' },
+  '10-100': { fpa: 8, label: '+₹90k' },
+  'up to 1,000,000+': { fpa: 45, label: '+₹5.8L' },
+  'MVP': { fpa: 5, label: 'Small Grade' },
+  'Fully-featured': { fpa: 60, label: '+₹14L' },
+  'MVP now/Full later': { fpa: 25, label: '+₹2.8L' },
+  'Web': { fpa: 12, label: '+₹1.4L' },
+  'Mobile': { fpa: 15, label: '+₹1.8L' },
+  'Desktop': { fpa: 10, label: '+₹1.2L' },
+  'Other_Platform': { fpa: 8, label: '+₹95k' },
+
+  // Step 3: Tech
+  'No_Integrations': { fpa: 0, label: 'None' },
+  'Maybe_Integrations': { fpa: 10, label: '+₹1.2L' },
+  'Yes_Integrations': { fpa: 30, label: '+₹3.8L' },
+  'Yes_Migration': { fpa: 20, label: '+₹2.5L' },
+  'No_Migration': { fpa: 0, label: 'None' },
+  'On-premises': { fpa: 15, label: '+₹1.8L' },
+  'Cloud': { fpa: 2, label: '+₹25k' },
+  'Hybrid': { fpa: 18, label: '+₹2.2L' },
+  'Not sure_Env': { fpa: 5, label: '+₹60k' },
+
+  // Step 4: Governance
+  'HIPAA': { fpa: 15, label: '+₹1.8L' },
+  'GDPR': { fpa: 10, label: '+₹1.2L' },
+  'PCI-DSS': { fpa: 20, label: '+₹2.4L' },
+  'Expert_Compliance': { fpa: 0, label: 'Free' },
+  'Other_Compliance': { fpa: 8, label: '+₹95k' },
+  'Time & Material': { fpa: 0, label: 'Flexible' },
+  'Fixed Price': { fpa: 10, label: '+₹1.2L' },
+  'Not sure_Model': { fpa: 5, label: '+₹60k' }
+};
+
 // --- Calculation Logic ---
 
 function calculateFPAFromAnswers(answers: Answers) {
-  let inputs = 10;
-  let outputs = 5;
-  let inquiries = 5;
-  let logFiles = 2;
-  let interfaces = 2;
+  // Base small project starts with very minimal FPA
+  let totalFPA = 10; 
 
-  if (answers.industryTailored === 'Yes') {
-    inputs += 8;
-    logFiles += 3;
-  }
+  // Apply impacts from selections
+  if (answers.industryTailored === 'Yes') totalFPA += OPTION_IMPACTS['tailored_Yes'].fpa;
   
-  // Base weights for selections
-  inputs += answers.primaryIndustry.length * 4;
+  answers.primaryIndustry.forEach(ind => {
+    if (OPTION_IMPACTS[ind]) totalFPA += OPTION_IMPACTS[ind].fpa;
+  });
 
-  const userMap: Record<string, number> = { '1-10': 0, '10-100': 5, '100-500': 15, 'up to 1,000,000+': 40 };
-  logFiles += userMap[answers.userCount] || 0;
-  
-  if (answers.version === 'Fully-featured') {
-    inputs += 20;
-    outputs += 15;
-    inquiries += 10;
-  } else if (answers.version === 'MVP now/Full later') {
-    inputs += 10;
-    outputs += 5;
+  if (answers.corePurpose && OPTION_IMPACTS[answers.corePurpose]) {
+    totalFPA += OPTION_IMPACTS[answers.corePurpose].fpa;
   }
 
-  interfaces += answers.platforms.length * 5;
-
-  if (answers.integrations === 'Yes multiple') {
-    interfaces += 15;
-    inputs += 10;
-  } else if (answers.integrations === 'Maybe') {
-    interfaces += 5;
-  }
-  
-  if (answers.dataMigration === 'Yes') {
-    inputs += 12;
-    logFiles += 6;
+  if (answers.userCount && OPTION_IMPACTS[answers.userCount]) {
+    totalFPA += OPTION_IMPACTS[answers.userCount].fpa;
   }
 
-  if (answers.compliance.length > 0 && !answers.compliance.includes('None')) {
-    logFiles += answers.compliance.length * 5;
-    outputs += answers.compliance.length * 2;
+  if (answers.version && OPTION_IMPACTS[answers.version]) {
+    totalFPA += OPTION_IMPACTS[answers.version].fpa;
   }
 
+  answers.platforms.forEach(p => {
+    if (OPTION_IMPACTS[p]) totalFPA += OPTION_IMPACTS[p].fpa;
+  });
+
+  const intKey = answers.integrations === 'Yes multiple' ? 'Yes_Integrations' : (answers.integrations === 'Maybe' ? 'Maybe_Integrations' : 'No_Integrations');
+  totalFPA += OPTION_IMPACTS[intKey].fpa;
+
+  if (answers.dataMigration === 'Yes') totalFPA += OPTION_IMPACTS['Yes_Migration'].fpa;
+
+  if (answers.environment && OPTION_IMPACTS[answers.environment]) {
+    totalFPA += OPTION_IMPACTS[answers.environment].fpa;
+  }
+
+  answers.compliance.forEach(c => {
+    const key = c === 'I need your expert advice on compliance' ? 'Expert_Compliance' : c;
+    if (OPTION_IMPACTS[key]) totalFPA += OPTION_IMPACTS[key].fpa;
+  });
+
+  if (answers.collaborationModel && OPTION_IMPACTS[answers.collaborationModel]) {
+    totalFPA += OPTION_IMPACTS[answers.collaborationModel].fpa;
+  }
+
+  // Return a balanced structure for the existing results display
   return {
-    extInputs: inputs,
-    extOutputs: outputs,
-    extInquiries: inquiries,
-    intLogFiles: logFiles,
-    extInterfaces: interfaces
+    extInputs: Math.round(totalFPA * 0.4),
+    extOutputs: Math.round(totalFPA * 0.2),
+    extInquiries: Math.round(totalFPA * 0.15),
+    intLogFiles: Math.round(totalFPA * 0.15),
+    extInterfaces: Math.round(totalFPA * 0.1)
   };
 }
 
@@ -170,9 +225,7 @@ export default function SaaSPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [answers, setAnswers] = useState<Answers>(INITIAL_ANSWERS);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
   const [results, setResults] = useState<any>(null);
-  const reportRef = useRef<HTMLDivElement>(null);
 
   const totalSteps = 6;
 
@@ -236,16 +289,22 @@ export default function SaaSPage() {
     setCurrentStep(6);
 
     setTimeout(() => {
-      const fpa = calculateFPAFromAnswers(answers);
-      const totalFPA = fpa.extInputs + fpa.extOutputs + fpa.extInquiries + fpa.intLogFiles + fpa.extInterfaces;
+      const fpaResult = calculateFPAFromAnswers(answers);
+      const totalFPA = fpaResult.extInputs + fpaResult.extOutputs + fpaResult.extInquiries + fpaResult.intLogFiles + fpaResult.extInterfaces;
       
-      const cocomoHours = Math.round(totalFPA * 18.5); 
-      const aiHours = Math.round(totalFPA * 12.2); 
+      // Commercial grade has a "Scale Factor" penalty (overhead), MVP is highly streamlined
+      let gradeMultiplier = 1.0;
+      if (answers.version === 'Fully-featured') gradeMultiplier = 1.8;
+      if (answers.version === 'MVP') gradeMultiplier = 0.5; // Commercial is 3.6x more expensive than MVP
+
+      const cocomoHours = Math.round(totalFPA * 14 * gradeMultiplier); 
+      const aiHours = Math.round(totalFPA * 8.5 * gradeMultiplier); 
       
-      const exchangeRate = 93;
-      const hourlyRateINR = 40 * exchangeRate; // ₹3,720
+      const hourlyRateINR = 2200; // Competitive local rate
       const aiCostINR = aiHours * hourlyRateINR;
-      const aiMonths = Math.ceil(aiHours / 160);
+
+      // Granular timeline: 0.5 month increments (based on 80-hour buckets)
+      const aiMonths = Math.ceil(aiHours / 80) / 2;
 
       const formatter = new Intl.NumberFormat('en-IN', {
         style: 'currency',
@@ -259,7 +318,8 @@ export default function SaaSPage() {
         aiCost: aiCostINR,
         aiCostFormatted: formatter.format(aiCostINR),
         aiMonths,
-        fpaDetails: fpa,
+        hourlyRateFormatted: formatter.format(hourlyRateINR),
+        fpaDetails: fpaResult,
         chartData: [
           { name: 'Stacking AI', hours: aiHours, color: '#2563eb' },
           { name: 'COCOMO', hours: cocomoHours, color: '#94a3b8' }
@@ -269,57 +329,7 @@ export default function SaaSPage() {
     }, 2000);
   };
 
-  const handleExportPDF = async () => {
-    if (!reportRef.current) return;
-    
-    setIsExporting(true);
-    try {
-      const element = reportRef.current;
-      if (!element) {
-        console.error('Report element ref is null');
-        throw new Error('Report element not found');
-      }
 
-      // Important: Scroll to top of the element to ensure capture doesn't shift
-      window.scrollTo(0, 0);
-      
-      // Wait for any final rendering/animations
-      await new Promise(resolve => setTimeout(resolve, 800));
-
-      console.log('Starting html2canvas capture...');
-      const canvas = await html2canvas(element, {
-        scale: 2, // Scale 2 is safer for performance while staying sharp
-        useCORS: true,
-        allowTaint: true,
-        logging: true,
-        backgroundColor: '#f8fafc',
-        // Ensure we capture the full height of the element
-        height: element.scrollHeight,
-        width: element.scrollWidth,
-        y: window.scrollY // Adjust for any remaining scroll
-      });
-      
-      console.log('Canvas created, generating image data...');
-      const imgData = canvas.toDataURL('image/png');
-      
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      const imgWidth = pdfWidth - 20; // 10mm margins
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      
-      console.log('Creating PDF...');
-      pdf.addImage(imgData, 'PNG', 10, 10, imgWidth, imgHeight);
-      pdf.save(`HybridEstimate-Report-${Date.now()}.pdf`);
-      console.log('PDF saved successfully');
-    } catch (error) {
-      console.error('CRITICAL PDF ERROR:', error);
-      alert('PDF Generation failed. If you see this, please try taking a screenshot or use "Print" (Ctrl+P) as a backup.');
-    } finally {
-      setIsExporting(false);
-    }
-  };
 
   // --- Sub-Components ---
 
@@ -555,13 +565,16 @@ export default function SaaSPage() {
                             <button
                               key={opt}
                               onClick={() => handleAnswerChange('industryTailored', opt)}
-                              className={`px-6 py-5 rounded-2xl border-2 text-left transition-all ${
+                              className={`group px-6 py-5 rounded-2xl border-2 text-left transition-all flex items-center justify-between ${
                                 answers.industryTailored === opt 
                                 ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-bold' 
                                 : 'border-gray-100 hover:border-blue-200 text-gray-600'
                               }`}
                             >
-                              {opt}
+                              <span>{opt}</span>
+                              <span className={`text-[10px] font-bold opacity-30 group-hover:opacity-100 transition-opacity ${answers.industryTailored === opt ? 'text-blue-600 opacity-60' : 'text-gray-400'}`}>
+                                {OPTION_IMPACTS[`tailored_${opt}`]?.label}
+                              </span>
                             </button>
                           ))}
                         </div>
@@ -574,13 +587,18 @@ export default function SaaSPage() {
                             <button
                               key={ind}
                               onClick={() => toggleCheckbox('primaryIndustry', ind)}
-                              className={`px-3 py-4 rounded-xl border text-xs font-bold transition-all ${
+                              className={`group relative px-3 py-4 rounded-xl border text-xs font-bold transition-all ${
                                 answers.primaryIndustry.includes(ind)
                                 ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-200'
                                 : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'
                               }`}
                             >
-                              {ind}
+                              <div className="mb-0.5">{ind}</div>
+                              {OPTION_IMPACTS[ind] && (
+                                <div className={`text-[8px] font-normal leading-none ${answers.primaryIndustry.includes(ind) ? 'text-blue-100' : 'text-gray-400 opacity-40 group-hover:opacity-70'}`}>
+                                  {OPTION_IMPACTS[ind].label}
+                                </div>
+                              )}
                             </button>
                           ))}
                         </div>
@@ -609,7 +627,7 @@ export default function SaaSPage() {
                             <button
                               key={type.id}
                               onClick={() => handleAnswerChange('corePurpose', type.id)}
-                              className={`p-6 rounded-2xl border-2 text-left transition-all ${
+                              className={`group p-6 rounded-2xl border-2 text-left transition-all relative ${
                                 answers.corePurpose === type.id 
                                 ? 'border-blue-600 bg-blue-50/50' 
                                 : 'border-gray-100 hover:border-blue-200'
@@ -617,6 +635,13 @@ export default function SaaSPage() {
                             >
                               <div className={`text-base font-bold mb-1 ${answers.corePurpose === type.id ? 'text-blue-700' : 'text-gray-900'}`}>{type.id}</div>
                               <div className="text-[11px] text-gray-400 font-semibold">{type.desc}</div>
+                              {OPTION_IMPACTS[type.id] && (
+                                <div className={`absolute top-4 right-4 text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                  answers.corePurpose === type.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 opacity-60 group-hover:opacity-100'
+                                }`}>
+                                  {OPTION_IMPACTS[type.id].label}
+                                </div>
+                              )}
                             </button>
                           ))}
                         </div>
@@ -655,7 +680,7 @@ export default function SaaSPage() {
                             <button
                               key={opt}
                               onClick={() => handleAnswerChange('userCount', opt)}
-                              className={`px-4 py-6 rounded-2xl border-2 transition-all ${
+                              className={`group px-4 py-6 rounded-2xl border-2 transition-all relative ${
                                 answers.userCount === opt 
                                 ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-bold shadow-sm' 
                                 : 'border-gray-100'
@@ -663,6 +688,9 @@ export default function SaaSPage() {
                             >
                               <Users className={`w-6 h-6 mb-3 mx-auto ${answers.userCount === opt ? 'text-blue-600' : 'text-gray-300'}`} />
                               <div className="text-xs text-center font-bold">{opt}</div>
+                              <div className={`text-[9px] text-center mt-1 font-bold ${answers.userCount === opt ? 'text-blue-600' : 'text-gray-400 opacity-30 group-hover:opacity-100'}`}>
+                                {OPTION_IMPACTS[opt]?.label}
+                              </div>
                             </button>
                           ))}
                         </div>
@@ -679,14 +707,21 @@ export default function SaaSPage() {
                             <button
                               key={opt.id}
                               onClick={() => handleAnswerChange('version', opt.id)}
-                              className={`p-6 rounded-2xl border-2 text-left transition-all ${
+                              className={`group p-6 rounded-2xl border-2 text-left transition-all relative ${
                                 answers.version === opt.id 
                                 ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-bold' 
-                                : 'border-gray-100'
+                                : 'border-gray-100 hover:border-blue-200'
                               }`}
                             >
                               <div className="text-sm">{opt.label}</div>
                               <div className="text-[10px] opacity-60 mt-1">{opt.desc}</div>
+                              {OPTION_IMPACTS[opt.id] && (
+                                <div className={`absolute top-4 right-4 text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                  answers.version === opt.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 opacity-60 group-hover:opacity-100'
+                                }`}>
+                                  {OPTION_IMPACTS[opt.id].label}
+                                </div>
+                              )}
                             </button>
                           ))}
                         </div>
@@ -699,14 +734,19 @@ export default function SaaSPage() {
                             <button
                               key={p.id}
                               onClick={() => toggleCheckbox('platforms', p.id)}
-                              className={`px-4 py-4 rounded-xl border flex items-center space-x-3 transition-all ${
+                              className={`group px-4 py-4 rounded-xl border flex items-center justify-between transition-all ${
                                 answers.platforms.includes(p.id)
                                 ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100'
                                 : 'bg-white border-gray-100 hover:border-blue-300'
                               }`}
                             >
-                              {p.icon}
-                              <span className="text-xs font-bold">{p.id}</span>
+                              <div className="flex items-center space-x-3">
+                                {p.icon}
+                                <span className="text-xs font-bold">{p.id}</span>
+                              </div>
+                              <span className={`text-[8px] font-bold ${answers.platforms.includes(p.id) ? 'text-blue-100' : 'text-gray-300 opacity-40 group-hover:opacity-70'}`}>
+                                {OPTION_IMPACTS[p.id]?.label}
+                              </span>
                             </button>
                           ))}
                         </div>
@@ -741,58 +781,80 @@ export default function SaaSPage() {
                       <section>
                         <label className="text-sm font-bold text-gray-900 mb-4 block">Connect with other tools?</label>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          {['No', 'Maybe', 'Yes multiple'].map(opt => (
-                            <button
-                              key={opt}
-                              onClick={() => handleAnswerChange('integrations', opt)}
-                              className={`px-6 py-5 rounded-2xl border-2 text-left transition-all ${
-                                answers.integrations === opt 
-                                ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-bold' 
-                                : 'border-gray-100'
-                              }`}
-                            >
-                              {opt}
-                            </button>
-                          ))}
+                          {['No', 'Maybe', 'Yes multiple'].map(opt => {
+                            const mapKey = opt === 'Yes multiple' ? 'Yes_Integrations' : (opt === 'Maybe' ? 'Maybe_Integrations' : 'No_Integrations');
+                            return (
+                              <button
+                                key={opt}
+                                onClick={() => handleAnswerChange('integrations', opt)}
+                                className={`group px-6 py-5 rounded-2xl border-2 text-left transition-all flex items-center justify-between ${
+                                  answers.integrations === opt 
+                                  ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-bold' 
+                                  : 'border-gray-100 hover:border-blue-200'
+                                }`}
+                              >
+                                <span>{opt}</span>
+                                <span className={`text-[9px] font-bold ${answers.integrations === opt ? 'text-blue-600' : 'text-gray-400 opacity-30 group-hover:opacity-100'}`}>
+                                  {OPTION_IMPACTS[mapKey]?.label}
+                                </span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </section>
 
                       <section>
                         <label className="text-sm font-bold text-gray-900 mb-4 block">Bring in data from current systems?</label>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {['Yes', 'No'].map(opt => (
-                            <button
-                              key={opt}
-                              onClick={() => handleAnswerChange('dataMigration', opt)}
-                              className={`flex items-center justify-between p-6 rounded-2xl border-2 transition-all ${
-                                answers.dataMigration === opt 
-                                ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-bold' 
-                                : 'border-gray-100'
-                              }`}
-                            >
-                              <span>{opt === 'Yes' ? 'Data Migration Required' : 'Starting Fresh'}</span>
-                              <Database className={`w-5 h-5 ${answers.dataMigration === opt ? 'text-blue-600' : 'text-gray-300'}`} />
-                            </button>
-                          ))}
+                          {['Yes', 'No'].map(opt => {
+                             const mapKey = opt === 'Yes' ? 'Yes_Migration' : 'No_Migration';
+                             return (
+                              <button
+                                key={opt}
+                                onClick={() => handleAnswerChange('dataMigration', opt)}
+                                className={`group flex items-center justify-between p-6 rounded-2xl border-2 transition-all ${
+                                  answers.dataMigration === opt 
+                                  ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-bold' 
+                                  : 'border-gray-100 hover:border-blue-200'
+                                }`}
+                              >
+                                <div className="flex flex-col">
+                                  <span>{opt === 'Yes' ? 'Data Migration Required' : 'Starting Fresh'}</span>
+                                  <span className={`text-[10px] font-bold mt-1 ${answers.dataMigration === opt ? 'text-blue-600' : 'text-gray-400 opacity-30 group-hover:opacity-100'}`}>
+                                    {OPTION_IMPACTS[mapKey]?.label}
+                                  </span>
+                                </div>
+                                <Database className={`w-5 h-5 ${answers.dataMigration === opt ? 'text-blue-600' : 'text-gray-300'}`} />
+                              </button>
+                             );
+                          })}
                         </div>
                       </section>
 
                       <section>
                         <label className="text-sm font-bold text-gray-900 mb-4 block">Environment preference?</label>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          {['On-premises', 'Cloud', 'Hybrid', 'Not sure'].map(opt => (
-                            <button
-                              key={opt}
-                              onClick={() => handleAnswerChange('environment', opt)}
-                              className={`p-6 rounded-2xl border-2 transition-all text-center ${
-                                answers.environment === opt 
-                                ? 'border-blue-600 bg-blue-50/50 font-bold text-blue-700' 
-                                : 'border-gray-100'
-                              }`}
-                            >
-                              <div className="text-xs">{opt}</div>
-                            </button>
-                          ))}
+                          {['On-premises', 'Cloud', 'Hybrid', 'Not sure'].map(opt => {
+                            const mapKey = opt === 'Not sure' ? 'Not sure_Env' : opt;
+                            return (
+                              <button
+                                key={opt}
+                                onClick={() => handleAnswerChange('environment', opt)}
+                                className={`group p-6 rounded-2xl border-2 transition-all text-center relative ${
+                                  answers.environment === opt 
+                                  ? 'border-blue-600 bg-blue-50/50 font-bold text-blue-700' 
+                                  : 'border-gray-100 hover:border-blue-200'
+                                }`}
+                              >
+                                <div className="text-xs">{opt}</div>
+                                {OPTION_IMPACTS[mapKey] && (
+                                  <div className={`text-[8px] mt-1 font-bold ${answers.environment === opt ? 'text-blue-500' : 'text-gray-400 opacity-30 group-hover:opacity-100'}`}>
+                                    {OPTION_IMPACTS[mapKey].label}
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
                         </div>
                       </section>
                     </div>
@@ -814,20 +876,30 @@ export default function SaaSPage() {
                       <section>
                         <label className="text-sm font-bold text-gray-900 mb-4 block">Compliance standards?</label>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {COMPLIANCE_STANDARDS.map(s => (
-                            <button
-                              key={s}
-                              onClick={() => toggleCheckbox('compliance', s)}
-                              className={`p-5 rounded-xl border flex items-center space-x-3 transition-all text-left ${
-                                answers.compliance.includes(s)
-                                ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100'
-                                : 'bg-white border-gray-100 hover:border-blue-300'
-                              }`}
-                            >
-                              <ShieldCheck className={`w-5 h-5 flex-shrink-0 ${answers.compliance.includes(s) ? 'text-white' : 'text-gray-300'}`} />
-                              <span className="text-xs font-bold leading-tight">{s}</span>
-                            </button>
-                          ))}
+                          {COMPLIANCE_STANDARDS.map(s => {
+                             const key = s === 'I need your expert advice on compliance' ? 'Expert_Compliance' : (s === 'Other' ? 'Other_Compliance' : s);
+                             return (
+                               <button
+                                  key={s}
+                                  onClick={() => toggleCheckbox('compliance', s)}
+                                  className={`group p-5 rounded-xl border flex items-center justify-between transition-all text-left ${
+                                    answers.compliance.includes(s)
+                                    ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100'
+                                    : 'bg-white border-gray-100 hover:border-blue-300'
+                                  }`}
+                                >
+                                  <div className="flex items-center space-x-3">
+                                    <ShieldCheck className={`w-5 h-5 flex-shrink-0 ${answers.compliance.includes(s) ? 'text-white' : 'text-gray-300'}`} />
+                                    <span className="text-xs font-bold leading-tight">{s}</span>
+                                  </div>
+                                  {OPTION_IMPACTS[key] && (
+                                    <span className={`text-[9px] font-bold ${answers.compliance.includes(s) ? 'text-blue-100' : 'text-gray-300 opacity-40 group-hover:opacity-70'}`}>
+                                      {OPTION_IMPACTS[key].label}
+                                    </span>
+                                  )}
+                                </button>
+                             );
+                          })}
                         </div>
                         {answers.compliance.includes('Other') && (
                           <div className="mt-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -849,20 +921,28 @@ export default function SaaSPage() {
                             { id: 'Time & Material', title: 'Agile T&M', desc: 'Pay per hour/resource' },
                             { id: 'Fixed Price', title: 'Fixed Price', desc: 'Predictable budget' },
                             { id: 'Not sure', title: 'Not sure', desc: 'Need guidance' }
-                          ].map(model => (
-                            <button
-                              key={model.id}
-                              onClick={() => handleAnswerChange('collaborationModel', model.id)}
-                              className={`p-6 rounded-2xl border-2 text-left transition-all ${
-                                answers.collaborationModel === model.id 
-                                ? 'border-blue-600 bg-blue-50/50' 
-                                : 'border-gray-100'
-                              }`}
-                            >
-                              <div className={`text-base font-bold mb-1 ${answers.collaborationModel === model.id ? 'text-blue-700' : 'text-gray-900'}`}>{model.title}</div>
-                              <div className="text-[11px] text-gray-400 font-semibold">{model.desc}</div>
-                            </button>
-                          ))}
+                          ].map(model => {
+                            const key = model.id === 'Not sure' ? 'Not sure_Model' : model.id;
+                            return (
+                              <button
+                                key={model.id}
+                                onClick={() => handleAnswerChange('collaborationModel', model.id)}
+                                className={`group p-6 rounded-2xl border-2 text-left transition-all relative ${
+                                  answers.collaborationModel === model.id 
+                                  ? 'border-blue-600 bg-blue-50/50' 
+                                  : 'border-gray-100 hover:border-blue-200'
+                                }`}
+                              >
+                                <div className={`text-base font-bold mb-1 ${answers.collaborationModel === model.id ? 'text-blue-700' : 'text-gray-900'}`}>{model.title}</div>
+                                <div className="text-[11px] text-gray-400 font-semibold">{model.desc}</div>
+                                <div className={`absolute top-4 right-4 text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                  answers.collaborationModel === model.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 opacity-40 group-hover:opacity-100'
+                                }`}>
+                                  {OPTION_IMPACTS[key]?.label}
+                                </div>
+                              </button>
+                            );
+                          })}
                         </div>
                       </section>
                     </div>
@@ -938,7 +1018,7 @@ export default function SaaSPage() {
                     </div>
                   ) : results && (
                     <div className="p-8 md:p-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
-                      <div className="max-w-4xl mx-auto" ref={reportRef}>
+                      <div className="max-w-4xl mx-auto">
                         <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-10 gap-4">
                           <div>
                             <h2 className="text-4xl font-extrabold text-gray-900 mb-2">Estimation Report</h2>
@@ -946,15 +1026,7 @@ export default function SaaSPage() {
                               <ShieldCheck className="w-4 h-4 mr-2 text-green-500" /> Powered by Hybrid Ensemble Meta-Learning
                             </p>
                           </div>
-                          <div className="flex space-x-3" data-html2canvas-ignore="true">
-                            <button 
-                              onClick={handleExportPDF}
-                              disabled={isExporting}
-                              className="flex items-center space-x-2 px-6 py-3 bg-white border border-gray-100 rounded-xl text-sm font-bold shadow-sm hover:shadow-md transition-all disabled:opacity-50"
-                            >
-                              {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
-                              <span>{isExporting ? 'Generating PDF...' : 'Export PDF'}</span>
-                            </button>
+                          <div className="flex space-x-3">
                             <button onClick={() => setCurrentStep(1)} className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-100 hover:scale-105 transition-all">
                               Start Over
                             </button>
@@ -962,9 +1034,9 @@ export default function SaaSPage() {
                         </div>
 
                         <div className="space-y-10">
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             {[
-                              { label: 'Estimated Cost', val: results.aiCostFormatted, sub: 'INR @ ₹3,720/hr', icon: <Activity className="text-blue-600" /> },
+                              { label: 'Estimated Cost', val: results.aiCostFormatted, sub: `INR @ ${results.hourlyRateFormatted}/hr`, icon: <Activity className="text-blue-600" /> },
                               { label: 'Total Effort', val: `${results.aiHours.toLocaleString()} hrs`, sub: 'Stacking AI Prediction', icon: <Clock className="text-green-600" /> },
                               { label: 'Delivery Time', val: `${results.aiMonths} Months`, sub: 'Estimated Timeline', icon: <CheckCircle2 className="text-purple-600" /> }
                             ].map((stat, i) => (
@@ -1037,14 +1109,13 @@ export default function SaaSPage() {
                                   </div>
                                   <div className="flex items-center justify-between text-sm">
                                     <span className="text-blue-100">Base Wage Mapping</span>
-                                    <span className="font-bold">₹3,720/hr</span>
+                                    <span className="font-bold">{results.hourlyRateFormatted}/hr</span>
                                   </div>
                                 </div>
                               </div>
                               
                               <button 
                                 onClick={() => setIsDemoModalOpen(true)}
-                                data-html2canvas-ignore="true"
                                 className="w-full bg-white p-10 rounded-[2.5rem] border border-gray-100 shadow-sm flex items-center justify-between group cursor-pointer hover:border-blue-600 transition-all text-left"
                               >
                                 <div>
