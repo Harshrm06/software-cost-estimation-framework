@@ -129,19 +129,20 @@ const OPTION_IMPACTS: Record<string, { fpa: number; label: string }> = {
   // Step 2: Users & Reach
   '1-10': { fpa: 0, label: 'Base' },
   '10-100': { fpa: 8, label: '+₹90k' },
-  'up to 1,000,000+': { fpa: 45, label: '+₹5.8L' },
-  'MVP': { fpa: 5, label: 'Small Grade' },
-  'Fully-featured': { fpa: 60, label: '+₹14L' },
-  'MVP now/Full later': { fpa: 25, label: '+₹2.8L' },
+  '100-1000': { fpa: 22, label: '+₹2.8L' },
+  '1000+': { fpa: 45, label: '+₹5.8L' },
+  'prototype_mvp': { fpa: 5, label: 'Small Grade' },
+  'commercial_platform': { fpa: 60, label: '+₹14L' },
+  'growth_mvp': { fpa: 25, label: '+₹2.8L' },
   'Web': { fpa: 12, label: '+₹1.4L' },
   'Mobile': { fpa: 15, label: '+₹1.8L' },
   'Desktop': { fpa: 10, label: '+₹1.2L' },
   'Other_Platform': { fpa: 8, label: '+₹95k' },
 
   // Step 3: Tech
-  'No_Integrations': { fpa: 0, label: 'None' },
-  'Maybe_Integrations': { fpa: 10, label: '+₹1.2L' },
-  'Yes_Integrations': { fpa: 30, label: '+₹3.8L' },
+  'no_integrations': { fpa: 0, label: 'None' },
+  'basic_integrations': { fpa: 10, label: '+₹1.2L' },
+  'advanced_integrations': { fpa: 30, label: '+₹3.8L' },
   'Yes_Migration': { fpa: 20, label: '+₹2.5L' },
   'No_Migration': { fpa: 0, label: 'None' },
   'On-premises': { fpa: 15, label: '+₹1.8L' },
@@ -189,7 +190,7 @@ function calculateFPAFromAnswers(answers: Answers) {
     if (OPTION_IMPACTS[p]) totalFPA += OPTION_IMPACTS[p].fpa;
   });
 
-  const intKey = answers.integrations === 'Yes multiple' ? 'Yes_Integrations' : (answers.integrations === 'Maybe' ? 'Maybe_Integrations' : 'No_Integrations');
+  const intKey = answers.integrations === 'Advanced integrations' ? 'advanced_integrations' : (answers.integrations === 'Basic integrations' ? 'basic_integrations' : 'no_integrations');
   totalFPA += OPTION_IMPACTS[intKey].fpa;
 
   if (answers.dataMigration === 'Yes') totalFPA += OPTION_IMPACTS['Yes_Migration'].fpa;
@@ -238,7 +239,17 @@ export default function SaaSPage() {
   };
 
   const handleAnswerChange = (field: keyof Answers, value: any) => {
-    setAnswers(prev => ({ ...prev, [field]: value }));
+    setAnswers(prev => {
+      const next = { ...prev, [field]: value };
+      
+      // If user switches to "No" for industry tailoring, clear their industry selections
+      if (field === 'industryTailored' && value === 'No') {
+        next.primaryIndustry = [];
+        next.otherIndustry = '';
+      }
+      
+      return next;
+    });
   };
 
   const toggleCheckbox = (field: 'primaryIndustry' | 'platforms' | 'compliance', item: string) => {
@@ -270,7 +281,10 @@ export default function SaaSPage() {
   const isStepValid = (step: number) => {
     switch (step) {
       case 1:
-        return !!answers.industryTailored && !!answers.corePurpose;
+        const isIndustrySet = (answers.industryTailored === 'Yes' || answers.industryTailored === 'Not sure') 
+          ? answers.primaryIndustry.length > 0 
+          : !!answers.industryTailored;
+        return isIndustrySet && !!answers.corePurpose;
       case 2:
         return !!answers.userCount && !!answers.version && answers.platforms.length > 0;
       case 3:
@@ -278,7 +292,7 @@ export default function SaaSPage() {
       case 4:
         return !!answers.collaborationModel && answers.compliance.length > 0;
       case 5:
-        return !!answers.fullName.trim() && !!answers.email.trim();
+        return !!answers.fullName.trim() && answers.email.includes('@') && answers.email.trim().toLowerCase().endsWith('.com');
       default:
         return true;
     }
@@ -294,8 +308,8 @@ export default function SaaSPage() {
       
       // Commercial grade has a "Scale Factor" penalty (overhead), MVP is highly streamlined
       let gradeMultiplier = 1.0;
-      if (answers.version === 'Fully-featured') gradeMultiplier = 1.8;
-      if (answers.version === 'MVP') gradeMultiplier = 0.5; // Commercial is 3.6x more expensive than MVP
+      if (answers.version === 'commercial_platform') gradeMultiplier = 1.8;
+      if (answers.version === 'prototype_mvp') gradeMultiplier = 0.5; // Commercial is 3.6x more expensive than MVP
 
       const cocomoHours = Math.round(totalFPA * 14 * gradeMultiplier); 
       const aiHours = Math.round(totalFPA * 8.5 * gradeMultiplier); 
@@ -412,14 +426,42 @@ export default function SaaSPage() {
   const DemoModal = () => {
     const [isSuccess, setIsSuccess] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
+    const [formData, setFormData] = useState({
+      name: '',
+      email: '',
+      phone: '',
+      company: ''
+    });
 
-    const handleConfirm = (e: React.FormEvent) => {
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const { name, value } = e.target;
+      setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleConfirm = async (e: React.FormEvent) => {
       e.preventDefault();
       setIsLoading(true);
-      setTimeout(() => {
-        setIsLoading(false);
+      setSubmitError(null);
+
+      try {
+        const response = await fetch('/api/request-demo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData)
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Failed to submit demo request');
+        }
+
         setIsSuccess(true);
-      }, 1500);
+      } catch (err: any) {
+        setSubmitError(err.message || 'An unexpected error occurred. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     if (!isDemoModalOpen) return null;
@@ -428,7 +470,12 @@ export default function SaaSPage() {
       <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
         <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl relative overflow-hidden">
           <button 
-            onClick={() => { setIsDemoModalOpen(false); setIsSuccess(false); }}
+            onClick={() => { 
+              setIsDemoModalOpen(false); 
+              setIsSuccess(false); 
+              setSubmitError(null);
+              setFormData({ name: '', email: '', phone: '', company: '' });
+            }}
             className="absolute top-6 right-6 text-gray-400 hover:text-gray-900 transition-colors"
           >
             <X className="w-6 h-6" />
@@ -441,31 +488,73 @@ export default function SaaSPage() {
                 <p className="text-gray-500 mb-8">See how our enterprise cost platform can transform your project planning.</p>
                 
                 <form onSubmit={handleConfirm} className="space-y-4">
+                  {submitError && (
+                    <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold animate-in fade-in slide-in-from-top-2">
+                      {submitError}
+                    </div>
+                  )}
                   <div>
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Full Name</label>
-                    <input required type="text" className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" placeholder="John Doe" />
+                    <input 
+                      required 
+                      name="name"
+                      type="text" 
+                      value={formData.name}
+                      onChange={handleInputChange}
+                      className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" 
+                      placeholder="John Doe" 
+                    />
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Company</label>
-                      <input required type="text" className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" placeholder="Acme Inc." />
+                      <input 
+                        required 
+                        name="company"
+                        type="text" 
+                        value={formData.company}
+                        onChange={handleInputChange}
+                        className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" 
+                        placeholder="Acme Inc." 
+                      />
                     </div>
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Work Email</label>
-                      <input required type="email" className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" placeholder="john@acme.com" />
+                      <input 
+                        required 
+                        name="email"
+                        type="email" 
+                        value={formData.email}
+                        onChange={handleInputChange}
+                        className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" 
+                        placeholder="john@acme.com" 
+                      />
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Preferred Date</label>
-                    <div className="relative">
-                      <input required type="date" className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" />
-                    </div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Phone Number</label>
+                    <input 
+                      required 
+                      name="phone"
+                      type="tel" 
+                      value={formData.phone}
+                      onChange={handleInputChange}
+                      className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all" 
+                      placeholder="+1 (555) 000-0000" 
+                    />
                   </div>
                   <button 
                     disabled={isLoading}
-                    className="w-full bg-blue-600 text-white font-bold py-5 rounded-2xl hover:bg-blue-700 transition-all flex items-center justify-center space-x-2 mt-4"
+                    className="w-full bg-blue-600 text-white font-bold py-5 rounded-2xl hover:bg-blue-700 transition-all flex items-center justify-center space-x-2 mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span>Confirm Booking</span>}
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>Sending Request...</span>
+                      </>
+                    ) : (
+                      <span>Confirm Booking</span>
+                    )}
                   </button>
                 </form>
               </>
@@ -474,10 +563,14 @@ export default function SaaSPage() {
                 <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 text-green-600">
                   <CheckCircle2 className="w-10 h-10" />
                 </div>
-                <h3 className="text-3xl font-bold text-gray-900 mb-2">Demo Confirmed!</h3>
-                <p className="text-gray-500 leading-relaxed">Our enterprise team will contact you shortly to confirm the technical session.</p>
+                <h3 className="text-3xl font-bold text-gray-900 mb-2">Demo Requested!</h3>
+                <p className="text-gray-500 leading-relaxed">Demo request submitted successfully. Please check your email for confirmation.</p>
                 <button 
-                  onClick={() => { setIsDemoModalOpen(false); setIsSuccess(false); }}
+                  onClick={() => { 
+                    setIsDemoModalOpen(false); 
+                    setIsSuccess(false); 
+                    setFormData({ name: '', email: '', phone: '', company: '' });
+                  }}
                   className="mt-10 text-sm font-bold text-blue-600 hover:text-blue-700 underline-offset-4 hover:underline"
                 >
                   Close Window
@@ -580,40 +673,44 @@ export default function SaaSPage() {
                         </div>
                       </section>
 
-                      <section>
-                        <label className="text-sm font-bold text-gray-900 mb-4 block">Primary industry? <span className="text-gray-400 font-normal">(Select all that apply)</span></label>
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                          {INDUSTRIES.map(ind => (
-                            <button
-                              key={ind}
-                              onClick={() => toggleCheckbox('primaryIndustry', ind)}
-                              className={`group relative px-3 py-4 rounded-xl border text-xs font-bold transition-all ${
-                                answers.primaryIndustry.includes(ind)
-                                ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-200'
-                                : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'
-                              }`}
-                            >
-                              <div className="mb-0.5">{ind}</div>
-                              {OPTION_IMPACTS[ind] && (
-                                <div className={`text-[8px] font-normal leading-none ${answers.primaryIndustry.includes(ind) ? 'text-blue-100' : 'text-gray-400 opacity-40 group-hover:opacity-70'}`}>
-                                  {OPTION_IMPACTS[ind].label}
-                                </div>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                        {answers.primaryIndustry.includes('Other') && (
-                          <div className="mt-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                            <input 
-                              type="text"
-                              value={answers.otherIndustry}
-                              onChange={(e) => handleAnswerChange('otherIndustry', e.target.value)}
-                              placeholder="Please specify your industry..."
-                              className="w-full bg-gray-50 border-2 border-blue-100 rounded-2xl px-6 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all font-medium"
-                            />
+                      {/* Conditional Industry Selection: Only show if Yes/Not sure */}
+                      {(answers.industryTailored === 'Yes' || answers.industryTailored === 'Not sure') && (
+                        <section className="animate-in fade-in slide-in-from-top-4 duration-500">
+                          <label className="text-sm font-bold text-gray-900 mb-4 block">Primary industry? <span className="text-gray-400 font-normal">(Select all that apply)</span></label>
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                            {INDUSTRIES.map(ind => (
+                              <button
+                                key={ind}
+                                onClick={() => toggleCheckbox('primaryIndustry', ind)}
+                                className={`group relative px-3 py-4 rounded-xl border text-xs font-bold transition-all ${
+                                  answers.primaryIndustry.includes(ind)
+                                  ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-200'
+                                  : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'
+                                }`}
+                              >
+                                <div className="mb-0.5">{ind}</div>
+                                {OPTION_IMPACTS[ind] && (
+                                  <div className={`text-[8px] font-normal leading-none ${answers.primaryIndustry.includes(ind) ? 'text-blue-100' : 'text-gray-400 opacity-40 group-hover:opacity-70'}`}>
+                                    {OPTION_IMPACTS[ind].label}
+                                  </div>
+                                )}
+                              </button>
+                            ))}
                           </div>
-                        )}
-                      </section>
+                          {answers.primaryIndustry.includes('Other') && (
+                            <div className="mt-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                              <input 
+                                type="text"
+                                value={answers.otherIndustry}
+                                onChange={(e) => handleAnswerChange('otherIndustry', e.target.value)}
+                                placeholder="Please specify your industry..."
+                                className="w-full bg-gray-50 border-2 border-blue-100 rounded-2xl px-6 py-4 text-sm focus:ring-2 focus:ring-blue-600 transition-all font-medium"
+                              />
+                            </div>
+                          )}
+                        </section>
+                      )}
+
 
                       <section>
                         <label className="text-sm font-bold text-gray-900 mb-4 block">Core purpose?</label>
@@ -675,8 +772,8 @@ export default function SaaSPage() {
                     <div className="space-y-10">
                       <section>
                         <label className="text-sm font-bold text-gray-900 mb-4 block">Expected user count?</label>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                          {['1-10', '10-100', 'up to 1,000,000+'].map(opt => (
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                          {['1-10', '10-100', '100-1000', '1000+'].map(opt => (
                             <button
                               key={opt}
                               onClick={() => handleAnswerChange('userCount', opt)}
@@ -700,9 +797,9 @@ export default function SaaSPage() {
                         <label className="text-sm font-bold text-gray-900 mb-4 block">Which software version?</label>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           {[
-                            { id: 'MVP', label: 'MVP Basic', desc: 'Core features only' },
-                            { id: 'Fully-featured', label: 'Commercial Grade', desc: 'Launch-ready scale' },
-                            { id: 'MVP now/Full later', label: 'Scalable MVP', desc: 'Hybrid blueprint' }
+                            { id: 'prototype_mvp', label: 'Prototype MVP', desc: 'Core features only' },
+                            { id: 'commercial_platform', label: 'Commercial Platform', desc: 'Launch-ready scale' },
+                            { id: 'growth_mvp', label: 'Growth MVP', desc: 'Hybrid blueprint' }
                           ].map(opt => (
                             <button
                               key={opt.id}
@@ -779,10 +876,10 @@ export default function SaaSPage() {
 
                     <div className="space-y-10">
                       <section>
-                        <label className="text-sm font-bold text-gray-900 mb-4 block">Connect with other tools?</label>
+                        <label className="text-sm font-bold text-gray-900 mb-4 block">Need integrations with other tools?</label>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          {['No', 'Maybe', 'Yes multiple'].map(opt => {
-                            const mapKey = opt === 'Yes multiple' ? 'Yes_Integrations' : (opt === 'Maybe' ? 'Maybe_Integrations' : 'No_Integrations');
+                          {['No integrations', 'Basic integrations', 'Advanced integrations'].map(opt => {
+                            const mapKey = opt === 'Advanced integrations' ? 'advanced_integrations' : (opt === 'Basic integrations' ? 'basic_integrations' : 'no_integrations');
                             return (
                               <button
                                 key={opt}
@@ -874,7 +971,7 @@ export default function SaaSPage() {
 
                     <div className="space-y-10">
                       <section>
-                        <label className="text-sm font-bold text-gray-900 mb-4 block">Compliance standards?</label>
+                        <label className="text-sm font-bold text-gray-900 mb-4 block">Any compliance or regulatory requirements?</label>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           {COMPLIANCE_STANDARDS.map(s => {
                              const key = s === 'I need your expert advice on compliance' ? 'Expert_Compliance' : (s === 'Other' ? 'Other_Compliance' : s);
@@ -915,7 +1012,7 @@ export default function SaaSPage() {
                       </section>
 
                       <section>
-                        <label className="text-sm font-bold text-gray-900 mb-4 block">Collaboration model?</label>
+                        <label className="text-sm font-bold text-gray-900 mb-4 block">How would you like the project to be managed?</label>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           {[
                             { id: 'Time & Material', title: 'Agile T&M', desc: 'Pay per hour/resource' },
